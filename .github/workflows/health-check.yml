@@ -1,0 +1,58 @@
+name: Scheduled Health Check
+
+on:
+  schedule:
+    - cron: "0 */12 * * *"
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Pull latest image
+        run: docker pull ${{ vars.DOCKER_USERNAME }}/github-actions-capstone:latest
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name health-check-app \
+            -p 8000:8000 \
+            ${{ vars.DOCKER_USERNAME }}/github-actions-capstone:latest
+
+      - name: Wait for startup
+        run: sleep 5
+
+      - name: Run health check
+        id: health
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health)
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "result=PASSED" >> $GITHUB_OUTPUT
+            echo "Health check PASSED"
+          else
+            echo "result=FAILED" >> $GITHUB_OUTPUT
+            echo "Health check FAILED"
+            exit 1s
+          fi
+
+      - name: Write step summary
+        if: always()
+        run: |
+          echo "## Health Check Report" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: ${{ vars.DOCKER_USERNAME }}/github-actions-capstone:latest" >> $GITHUB_STEP_SUMMARY
+          echo "- Status: ${{ steps.health.outputs.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Time: $(date -u)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop health-check-app || true
+          docker rm health-check-app || true
